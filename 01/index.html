@@ -23,10 +23,11 @@
   <div id="hint">Drag to spin &middot; pinch to zoom</div>
 </model-viewer>
 <script>
-  const m = new URLSearchParams(location.search).get('m')?.replace(/[^\w.-]/g, '');
+  const m = new URLSearchParams(location.search).get('m')?.replace(/[^\w./-]/g, '').replace(/\.\./g, '');
   const mv = document.getElementById('mv');
   if (!m) { mv.hidden = true; document.getElementById('msg').hidden = false; }
-  else { mv.src = `models/${m}.glb`; mv.setAttribute('ios-src', `models/${m}.usdz`); document.title = m; }
+  else { const base = m.includes('/') ? m : `models/${m}`;   // ?m=01/NAME uses folder 01, ?m=NAME uses models/
+  mv.src = `${base}.glb`; mv.setAttribute('ios-src', `${base}.usdz`); document.title = m.split('/').pop(); }
 </script>
 </body>
 </html>
