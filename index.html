@@ -28,8 +28,8 @@
 <header id="top"><a id="meas" hidden>Measure</a><a id="logolink" href="https://leytongroup.com/" target="_blank" rel="noopener"><img id="logo" src="logo.png" alt="Leyton Group"></a></header>
 <div id="msg" hidden>No model specified. Use a link like <b>?m=01/MAYA_DERIVE_AR-01</b></div>
 <model-viewer id="mv" alt="Staircase 3D model" ar ar-modes="webxr scene-viewer quick-look"
-  ar-placement="floor" camera-controls touch-action="pan-y" auto-rotate shadow-intensity="1"
-  environment-image="neutral" exposure="1.1" camera-orbit="auto auto 70%" min-camera-orbit="auto auto 3%" max-camera-orbit="auto auto 250%">
+  ar-placement="floor" camera-controls touch-action="none" orbit-sensitivity="2" interpolation-decay="100" interaction-prompt="none" shadow-intensity="1"
+  environment-image="neutral" exposure="1.1" camera-orbit="30deg 75deg 70%" min-camera-orbit="auto 0deg 3%" max-camera-orbit="auto 180deg 250%">
   <button id="ar" slot="ar-button">View in AR</button>
 </model-viewer>
 <div id="hint">Drag to spin &middot; pinch to zoom<br><span id="dims"></span></div>
@@ -43,10 +43,19 @@
   else {
     const base = m.includes('/') ? m : `models/${m}`;   // ?m=01/NAME uses folder 01, ?m=NAME uses models/
     // NAME.glb/.usdz = 1:10 table-top (starting view), NAME_1to1.glb/.usdz = full size
-    let lab = '1:10';
-    mv.addEventListener('load', () => { const d = mv.getDimensions();
-      document.getElementById('dims').textContent = `Size in AR at ${lab}: ${d.x.toFixed(2)} × ${d.y.toFixed(2)} × ${d.z.toFixed(2)} m (W × H × D)`; });
-    const setScale = s => { lab = s ? '1:1' : '1:10'; mv.src = `${base}${s}.glb`; mv.setAttribute('ios-src', `${base}${s}.usdz`);
+    const dimsEl = document.getElementById('dims'), mm = v => Math.round(v * 1000).toLocaleString('en-GB');
+    let lab = '1:10', keep = null;
+    mv.addEventListener('load', () => {
+      const d = mv.getDimensions(); dimsEl.textContent = `Size in AR at ${lab}: ${mm(d.x)} × ${mm(d.y)} × ${mm(d.z)} mm (W × H × D)`;
+      if (lab === '1:1' && keep) {   // same camera position as the 1:10 view, so the stair appears 10x larger; pinch out to see all of it
+        mv.minCameraOrbit = 'auto 0deg 0.05m'; mv.maxCameraOrbit = 'auto 180deg 60m';
+        mv.cameraOrbit = `${keep.theta}rad ${keep.phi}rad ${keep.radius}m`; mv.jumpCameraToGoal();
+      } else { mv.minCameraOrbit = 'auto 0deg 3%'; mv.maxCameraOrbit = 'auto 180deg 250%'; mv.cameraOrbit = '30deg 75deg 70%'; mv.jumpCameraToGoal(); }
+    });
+    const setScale = s => {
+      const to = s ? '1:1' : '1:10'; if (mv.loaded && to === lab) return;
+      keep = (mv.loaded && to === '1:1') ? mv.getCameraOrbit() : null; lab = to;
+      mv.src = `${base}${s}.glb`; mv.setAttribute('ios-src', `${base}${s}.usdz`);
       document.querySelectorAll('#scale button').forEach(b => b.classList.toggle('on', b.dataset.s === s)); };
     document.querySelectorAll('#scale button').forEach(b => b.onclick = () => setScale(b.dataset.s));
     setScale('');
