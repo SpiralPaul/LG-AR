@@ -43,6 +43,7 @@ const scene = new THREE.Scene(); scene.background = new THREE.Color(0xeeeeee);
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.005, 100);
 const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
+controls.zoomSpeed = matchMedia('(pointer: coarse)').matches ? 1 : 2.5;   // faster mouse-wheel zoom on computers; phones unchanged
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---- corner ("node") points: vertices where the surface changes direction ----
