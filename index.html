@@ -10,7 +10,7 @@
   html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #f2f2f2; }
   #top { position: fixed; top: 0; left: 0; right: 0; z-index: 3; box-sizing: border-box; height: calc(var(--bar) + env(safe-area-inset-top, 0px));
          padding: env(safe-area-inset-top, 0px) 14px 0; background: #1a1a1a; display: flex; align-items: center; justify-content: space-between; }
-  #logo { height: 24px; max-width: 55%; object-fit: contain; }
+  #logolink { display: flex; max-width: 55%; } #logo { height: 24px; max-width: 100%; object-fit: contain; }
   #meas { padding: 8px 16px; border: 1px solid #fff; border-radius: 20px; color: #fff; text-decoration: none; font-size: .9rem; }
   model-viewer { position: fixed; left: 0; top: calc(var(--bar) + env(safe-area-inset-top, 0px)); width: 100%; height: calc(100% - var(--bar) - env(safe-area-inset-top, 0px)); --poster-color: transparent; }
   #msg { padding: 5rem 2rem; text-align: center; }
@@ -25,25 +25,28 @@
 </style>
 </head>
 <body>
-<header id="top"><a id="meas" hidden>Measure</a><img id="logo" src="logo.png" alt="Leyton Group"></header>
+<header id="top"><a id="meas" hidden>Measure</a><a id="logolink" href="https://leytongroup.com/" target="_blank" rel="noopener"><img id="logo" src="logo.png" alt="Leyton Group"></a></header>
 <div id="msg" hidden>No model specified. Use a link like <b>?m=01/MAYA_DERIVE_AR-01</b></div>
 <model-viewer id="mv" alt="Staircase 3D model" ar ar-modes="webxr scene-viewer quick-look"
   ar-placement="floor" camera-controls touch-action="pan-y" auto-rotate shadow-intensity="1"
-  environment-image="neutral" exposure="1.1" min-camera-orbit="auto auto 0.2m">
+  environment-image="neutral" exposure="1.1" camera-orbit="auto auto 70%" min-camera-orbit="auto auto 3%" max-camera-orbit="auto auto 250%">
   <button id="ar" slot="ar-button">View in AR</button>
 </model-viewer>
-<div id="hint">Drag to spin &middot; pinch to zoom</div>
+<div id="hint">Drag to spin &middot; pinch to zoom<br><span id="dims"></span></div>
 <div id="scale"><span>AR scale</span><button data-s="" class="on">1:10</button><button data-s="_1to1">1:1</button></div>
 <script>
   const mv = document.getElementById('mv');
   const q = new URLSearchParams(location.search);
-  if (q.get('resize') !== 'on') mv.setAttribute('ar-scale', 'fixed');   // locks the chosen scale; add &resize=on to the link to allow pinch-resizing
+  if (q.get('resize') === 'off') mv.setAttribute('ar-scale', 'fixed');   // add &resize=off to a link to stop pinch-resizing in AR
   const m = q.get('m')?.replace(/[^\w./-]/g, '').replace(/\.\./g, '');
   if (!m) { mv.hidden = true; document.getElementById('scale').hidden = true; document.getElementById('msg').hidden = false; }
   else {
     const base = m.includes('/') ? m : `models/${m}`;   // ?m=01/NAME uses folder 01, ?m=NAME uses models/
     // NAME.glb/.usdz = 1:10 table-top (starting view), NAME_1to1.glb/.usdz = full size
-    const setScale = s => { mv.src = `${base}${s}.glb`; mv.setAttribute('ios-src', `${base}${s}.usdz`);
+    let lab = '1:10';
+    mv.addEventListener('load', () => { const d = mv.getDimensions();
+      document.getElementById('dims').textContent = `Size in AR at ${lab}: ${d.x.toFixed(2)} × ${d.y.toFixed(2)} × ${d.z.toFixed(2)} m (W × H × D)`; });
+    const setScale = s => { lab = s ? '1:1' : '1:10'; mv.src = `${base}${s}.glb`; mv.setAttribute('ios-src', `${base}${s}.usdz`);
       document.querySelectorAll('#scale button').forEach(b => b.classList.toggle('on', b.dataset.s === s)); };
     document.querySelectorAll('#scale button').forEach(b => b.onclick = () => setScale(b.dataset.s));
     setScale('');
