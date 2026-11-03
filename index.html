@@ -12,7 +12,7 @@
          padding: env(safe-area-inset-top, 0px) 14px 0; background: #1a1a1a; display: flex; align-items: center; justify-content: space-between; }
   #logo { height: 24px; max-width: 55%; object-fit: contain; }
   #meas { padding: 8px 16px; border: 1px solid #fff; border-radius: 20px; color: #fff; text-decoration: none; font-size: .9rem; }
-  model-viewer { position: fixed; left: 0; right: 0; bottom: 0; top: calc(var(--bar) + env(safe-area-inset-top, 0px)); width: 100%; --poster-color: transparent; }
+  model-viewer { position: fixed; left: 0; top: calc(var(--bar) + env(safe-area-inset-top, 0px)); width: 100%; height: calc(100% - var(--bar) - env(safe-area-inset-top, 0px)); --poster-color: transparent; }
   #msg { padding: 5rem 2rem; text-align: center; }
   #ar { position: absolute; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); padding: 14px 28px;
         font-size: 1rem; border: 0; border-radius: 28px; background: #1a1a1a; color: #fff; white-space: nowrap; }
