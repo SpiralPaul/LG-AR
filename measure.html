@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Leyton Group – Measure</title>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; background: #eee; }
+  canvas { display: block; touch-action: none; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: rgba(255,255,255,.9); font-size: 14px; }
+  #status { flex: 1; }
+  button, a.btn { font: inherit; padding: 8px 14px; border: 0; border-radius: 18px; background: #1a1a1a; color: #fff; text-decoration: none; }
+  #panel { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: rgba(255,255,255,.93); }
+  #panel .g { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; }
+  #panel small { display: block; color: #666; } #panel b { font-size: 1.05rem; }
+  .lab { position: fixed; transform: translate(-50%,-50%); padding: 2px 7px; border-radius: 8px; color: #fff; font-size: 12px; pointer-events: none; white-space: nowrap; }
+  .dot { position: fixed; width: 16px; height: 16px; margin: -8px; border: 3px solid #ff7a00; border-radius: 50%; box-sizing: border-box; pointer-events: none; display: none; }
+  #hover { border-color: #00a0ff; }
+</style>
+</head>
+<body>
+<div id="bar"><span id="status">Loading…</span><button id="clear">Clear</button><a class="btn" id="ar" href="#">AR view</a></div>
+<div id="panel"><div class="g">
+  <div><small>Direct</small><b id="vD">–</b></div><div><small style="color:#d22">X</small><b id="vX">–</b></div>
+  <div><small style="color:#1a9a1a">Y</small><b id="vY">–</b></div><div><small style="color:#14e">Z (height)</small><b id="vZ">–</b></div></div></div>
+<div class="dot" id="dA"></div><div class="dot" id="dB"></div><div class="dot" id="hover"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const $ = id => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const m = (q.get('m') || '').replace(/[^\w./-]/g, '').replace(/\.\./g, '');
+const base = m.includes('/') ? m : `models/${m}`;
+$('ar').href = 'index.html?m=' + encodeURIComponent(m);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio); renderer.setSize(innerWidth, innerHeight); document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xeeeeee);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.005, 100);
+const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+// ---- corner ("node") points: vertices where the surface changes direction ----
+let feat = new Float32Array(0), ratio = 20;
+function buildFeatures(root) {
+  const out = [], a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    const P = o.geometry.attributes.position, I = o.geometry.index, T = (I ? I.count : P.count) / 3, seen = new Map();
+    for (let t = 0; t < T; t++) {
+      const ix = k => I ? I.getX(3 * t + k) : 3 * t + k, vs = [a, b, c];
+      vs.forEach((v, k) => v.fromBufferAttribute(P, ix(k)).applyMatrix4(o.matrixWorld));
+      e1.subVectors(b, a); e2.subVectors(c, a); const n = e1.cross(e2);
+      if (n.lengthSq() < 1e-20) continue; n.normalize();
+      for (const v of vs) {
+        const k = Math.round(v.x * 1e5) + ',' + Math.round(v.y * 1e5) + ',' + Math.round(v.z * 1e5), r = seen.get(k);
+        if (!r) seen.set(k, { p: [v.x, v.y, v.z], n: [n.x, n.y, n.z], f: false });
+        else if (!r.f && r.n[0] * n.x + r.n[1] * n.y + r.n[2] * n.z < 0.9) r.f = true;   // faces meet at > ~25°
+      }
+    }
+    for (const r of seen.values()) if (r.f) out.push(...r.p);
+  });
+  feat = new Float32Array(out);
+}
+
+new GLTFLoader().load(`${base}.glb`, g => {
+  scene.add(g.scene); g.scene.updateMatrixWorld(true);
+  ratio = Number(q.get('ratio')) || g.scene.getObjectByName('AR_ROOT')?.userData?.ratio || 20;
+  buildFeatures(g.scene);
+  const box = new THREE.Box3().setFromObject(g.scene), c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(0.6, 0.4, 0.9).normalize().multiplyScalar(r * 1.1)); controls.update();
+  $('status').textContent = `Tap a corner for point A  (${(feat.length / 3) | 0} snap points)`;
+}, undefined, () => $('status').textContent = 'Could not load the model');
+
+// ---- snapping: nearest corner to the finger/mouse in screen space ----
+function snap(px, py, R) {
+  camera.updateMatrixWorld();
+  const M = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).elements, W = innerWidth, H = innerHeight;
+  let best = -1, bs = R * R;
+  for (let i = 0; i < feat.length; i += 3) {
+    const x = feat[i], y = feat[i + 1], z = feat[i + 2], w = M[3] * x + M[7] * y + M[11] * z + M[15];
+    if (w <= 0) continue;
+    const sx = ((M[0] * x + M[4] * y + M[8] * z + M[12]) / w * 0.5 + 0.5) * W, sy = (1 - ((M[1] * x + M[5] * y + M[9] * z + M[13]) / w * 0.5 + 0.5)) * H;
+    const s = (sx - px) ** 2 + (sy - py) ** 2 + w * 10;   // small bias towards the nearer corner
+    if (s < bs) { bs = s; best = i; }
+  }
+  return best < 0 ? null : new THREE.Vector3(feat[best], feat[best + 1], feat[best + 2]);
+}
+
+// ---- picking ----
+let pts = [], hover = null, down = null; const el = renderer.domElement;
+el.addEventListener('pointerdown', e => down = { x: e.clientX, y: e.clientY });
+el.addEventListener('pointerup', e => {
+  if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
+  const s = snap(e.clientX, e.clientY, e.pointerType === 'mouse' ? 20 : 40);
+  if (!s) { $('status').textContent = 'No corner near there – zoom in or tap closer to a corner'; return; }
+  if (pts.length >= 2) pts = []; pts.push(s); refresh();
+});
+el.addEventListener('pointermove', e => { hover = e.pointerType === 'mouse' && !e.buttons ? snap(e.clientX, e.clientY, 20) : null; });
+$('clear').onclick = () => { pts = []; refresh(); };
+
+// ---- dimension display (CAD axes: X = x, Y = -z, Z = up = y in the glTF file) ----
+const lines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true }));
+lines.frustumCulled = false; lines.renderOrder = 10; scene.add(lines);
+const labs = ['#ff7a00', '#d22', '#1a9a1a', '#14e'].map(col => { const d = document.createElement('div'); d.className = 'lab'; d.style.background = col; d.style.display = 'none'; document.body.append(d); return d; });
+const fmt = v => Math.round(v).toLocaleString('en-GB') + ' mm';
+let segs = [];
+function refresh() {
+  segs = []; labs.forEach(l => l.style.display = 'none');
+  ['vD', 'vX', 'vY', 'vZ'].forEach(id => $(id).textContent = '–');
+  lines.geometry.setAttribute('position', new THREE.Float32BufferAttribute([], 3)); lines.geometry.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
+  if (pts.length < 2) { $('status').textContent = pts.length ? 'Now tap a corner for point B' : 'Tap a corner for point A'; return; }
+  const [A, B] = pts, P1 = new THREE.Vector3(B.x, A.y, A.z), P2 = new THREE.Vector3(B.x, A.y, B.z), f = ratio * 1000, d = B.clone().sub(A);
+  const vals = [d.length() * f, Math.abs(d.x) * f, Math.abs(d.z) * f, Math.abs(d.y) * f];
+  segs = [[A, B, [1, .48, 0]], [A, P1, [.85, .13, .13]], [P1, P2, [.1, .6, .1]], [P2, B, [.08, .13, .93]]];
+  const pos = [], col = []; segs.forEach(([p, q2, c]) => { pos.push(p.x, p.y, p.z, q2.x, q2.y, q2.z); col.push(...c, ...c); });
+  lines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); lines.geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  ['vD', 'vX', 'vY', 'vZ'].forEach((id, i) => $(id).textContent = fmt(vals[i]));
+  segs.forEach((s, i) => { s.push(vals[i]); });
+  $('status').textContent = 'Tap again to start a new measurement';
+}
+const scr = v => { const p = v.clone().project(camera); return { x: (p.x * .5 + .5) * innerWidth, y: (1 - (p.y * .5 + .5)) * innerHeight, ok: p.z < 1 }; };
+const place = (d, v) => { if (!v) { d.style.display = 'none'; return; } const s = scr(v); d.style.display = s.ok ? 'block' : 'none'; d.style.left = s.x + 'px'; d.style.top = s.y + 'px'; };
+(function loop() {
+  requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera);
+  place($('dA'), pts[0]); place($('dB'), pts[1]); place($('hover'), hover);
+  segs.forEach(([p, q2, , v], i) => { const l = labs[i]; if (v < 0.5) { l.style.display = 'none'; return; }
+    const s = scr(p.clone().add(q2).multiplyScalar(0.5)); l.style.display = s.ok ? 'block' : 'none'; l.style.left = s.x + 'px'; l.style.top = s.y + 'px'; l.textContent = fmt(v); });
+})();
+</script>
+</body>
+</html>
