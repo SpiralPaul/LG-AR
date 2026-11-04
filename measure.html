@@ -8,7 +8,7 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; background: #eee; }
   canvas { display: block; touch-action: none; }
-  #bar { position: fixed; top: 0; left: 0; right: 0; display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: rgba(255,255,255,.92); font-size: 14px; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: rgba(255,255,255,.9); font-size: 14px; }
   #status { flex: 1; }
   button, a.btn { font: inherit; padding: 8px 14px; border: 0; border-radius: 18px; background: #1a1a1a; color: #fff; text-decoration: none; }
   #panel { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: rgba(255,255,255,.93); }
@@ -22,7 +22,7 @@
 <body>
 <div id="bar"><span id="status">Loading…</span><button id="clear">Clear</button><a class="btn" id="ar" href="#">AR view</a></div>
 <div id="panel"><div class="g">
-  <div><small id="lD">Direct</small><b id="vD">–</b></div><div><small style="color:#d22">X</small><b id="vX">–</b></div>
+  <div><small>Direct</small><b id="vD">–</b></div><div><small style="color:#d22">X</small><b id="vX">–</b></div>
   <div><small style="color:#1a9a1a">Y</small><b id="vY">–</b></div><div><small style="color:#14e">Z (height)</small><b id="vZ">–</b></div></div></div>
 <div class="dot" id="dA"></div><div class="dot" id="dB"></div><div class="dot" id="hover"></div>
 <script type="module">
@@ -46,28 +46,8 @@ const controls = new OrbitControls(camera, renderer.domElement); controls.enable
 controls.zoomSpeed = matchMedia('(pointer: coarse)').matches ? 1 : 2.5;   // faster mouse-wheel zoom on computers; phones unchanged
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
-const GESTURE_TARGET = renderer.domElement;
-function zoomBy(k) { const off = camera.position.clone().sub(controls.target); camera.position.copy(controls.target).add(off.setLength(Math.min(60, Math.max(0.02, off.length() * k)))); controls.update(); }
-function panBy(dx, dy) {
-  camera.updateMatrix(); const d = camera.position.distanceTo(controls.target), per = 2 * d * Math.tan(camera.fov * Math.PI / 360) / innerHeight, x = new THREE.Vector3(), y = new THREE.Vector3(), z = new THREE.Vector3();
-  camera.matrix.extractBasis(x, y, z); const sh = x.multiplyScalar(dx * per).addScaledVector(y, -dy * per); camera.position.add(sh); controls.target.add(sh); controls.update();
-}
-// ---- trackpad gestures (laptops): pinch = zoom, two-finger swipe = pan, mouse wheel = zoom; Ctrl + wheel always zooms ----
-let lastWheel = 0, burst = 0;
-document.addEventListener('wheel', e => {
-  if (!e.composedPath().includes(GESTURE_TARGET)) return;
-  e.preventDefault(); e.stopImmediatePropagation();
-  const now = performance.now(); burst = now - lastWheel < 40 ? burst + 1 : 0; lastWheel = now;
-  const mouseWheel = !e.ctrlKey && burst < 3 && (e.deltaMode !== 0 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 100 && (e.deltaY % 100 === 0 || e.deltaY % 120 === 0)));
-  if (e.ctrlKey) zoomBy(Math.exp(e.deltaY * 0.012));            // pinch on the trackpad
-  else if (mouseWheel) zoomBy(Math.exp(e.deltaY * 0.0015));     // mouse wheel
-  else panBy(e.deltaX, e.deltaY);                               // two-finger swipe
-}, { capture: true, passive: false });
-
-// ==== GEOMETRY START ====================================================
-let feat = new Float32Array(0), tris = new Float32Array(0), faceOf = new Int32Array(0), faces = [];
-
-// corner ("node") points: vertices where the surface changes direction
+// ---- corner ("node") points: vertices where the surface changes direction ----
+let feat = new Float32Array(0), ratio = 20;
 function buildFeatures(root) {
   const out = [], a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
   root.traverse(o => {
@@ -89,125 +69,16 @@ function buildFeatures(root) {
   feat = new Float32Array(out);
 }
 
-// flat surfaces: neighbouring triangles lying in the same plane are grouped into one face
-let vid = new Int32Array(0), te = new Int32Array(0), ea = new Int32Array(0), eb = new Int32Array(0);
-function buildFaces(root, tol) {
-  let N = 0; const v = new THREE.Vector3();
-  root.traverse(o => { if (o.isMesh) { const g = o.geometry; N += (g.index ? g.index.count : g.attributes.position.count) / 3; } });
-  tris = new Float32Array(N * 9); let n = 0;
-  root.traverse(o => {
-    if (!o.isMesh) return;
-    o.userData.off = n; const P = o.geometry.attributes.position, I = o.geometry.index, cnt = (I ? I.count : P.count) / 3;
-    for (let t = 0; t < cnt; t++, n++) for (let k = 0; k < 3; k++) { v.fromBufferAttribute(P, I ? I.getX(3 * t + k) : 3 * t + k).applyMatrix4(o.matrixWorld); tris.set([v.x, v.y, v.z], n * 9 + k * 3); }
-  });
-  // weld identical corner positions (hash table), then number the shared edges
-  const NV = N * 3; let size = 1; while (size < NV * 2) size <<= 1;
-  const table = new Int32Array(size).fill(-1), ux = new Int32Array(NV), uy = new Int32Array(NV), uz = new Int32Array(NV); let nu = 0;
-  vid = new Int32Array(NV);
-  for (let i = 0; i < NV; i++) {
-    const qx = Math.round(tris[i * 3] * 1e5), qy = Math.round(tris[i * 3 + 1] * 1e5), qz = Math.round(tris[i * 3 + 2] * 1e5);
-    let h = (Math.imul(qx, 73856093) ^ Math.imul(qy, 19349663) ^ Math.imul(qz, 83492791)) & (size - 1), id = -1;
-    while (table[h] !== -1) { const c = table[h]; if (ux[c] === qx && uy[c] === qy && uz[c] === qz) { id = c; break; } h = (h + 1) & (size - 1); }
-    if (id < 0) { id = nu++; table[h] = id; ux[id] = qx; uy[id] = qy; uz[id] = qz; }
-    vid[i] = id;
-  }
-  te = new Int32Array(NV); ea = new Int32Array(NV).fill(-1); eb = new Int32Array(NV).fill(-1);
-  const nr = new Float32Array(N * 3), ar = new Float32Array(N), emap = new Map(); let ne = 0;
-  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nn = new THREE.Vector3();
-  for (let t = 0; t < N; t++) {
-    const o = t * 9;
-    e1.set(tris[o + 3] - tris[o], tris[o + 4] - tris[o + 1], tris[o + 5] - tris[o + 2]); e2.set(tris[o + 6] - tris[o], tris[o + 7] - tris[o + 1], tris[o + 8] - tris[o + 2]);
-    nn.crossVectors(e1, e2); const L = nn.length(); ar[t] = L / 2; if (L > 1e-18) nn.divideScalar(L); nr[t * 3] = nn.x; nr[t * 3 + 1] = nn.y; nr[t * 3 + 2] = nn.z;
-    for (let i = 0; i < 3; i++) {
-      const p = vid[t * 3 + i], r = vid[t * 3 + (i + 1) % 3], key = p < r ? p * NV + r : r * NV + p; let ei = emap.get(key);
-      if (ei === undefined) { ei = ne++; emap.set(key, ei); ea[ei] = t; } else if (eb[ei] === -1) eb[ei] = t;
-      te[t * 3 + i] = ei;
-    }
-  }
-  const other = (t, i) => { const ei = te[t * 3 + i]; return ea[ei] === t ? eb[ei] : ea[ei]; };
-  faceOf = new Int32Array(N).fill(-1); faces = [];
-  const dotn = (a, b) => nr[a * 3] * nr[b * 3] + nr[a * 3 + 1] * nr[b * 3 + 1] + nr[a * 3 + 2] * nr[b * 3 + 2];
-  for (let s = 0; s < N; s++) {
-    if (faceOf[s] !== -1 || ar[s] < 1e-14) continue;
-    const id = faces.length, list = [s], stack = [s]; faceOf[s] = id; let curved = false;
-    const ns = [nr[s * 3], nr[s * 3 + 1], nr[s * 3 + 2]], d0 = ns[0] * tris[s * 9] + ns[1] * tris[s * 9 + 1] + ns[2] * tris[s * 9 + 2];
-    while (stack.length) {
-      const t = stack.pop();
-      for (let i = 0; i < 3; i++) {
-        const u = other(t, i); if (u < 0 || u === t || faceOf[u] === id) continue;
-        const dt = dotn(t, u);
-        if (faceOf[u] === -1 && dt > 0.99995) {
-          let ok = true;
-          for (let k = 0; k < 3; k++) { const w = u * 9 + k * 3; if (Math.abs(ns[0] * tris[w] + ns[1] * tris[w + 1] + ns[2] * tris[w + 2] - d0) > tol) { ok = false; break; } }
-          if (ok) { faceOf[u] = id; list.push(u); stack.push(u); continue; }
-        }
-        if (dt > 0.9397 && dt <= 0.99995) curved = true;   // a neighbour turns by 0.6°–20°: smoothly curved surface
-      }
-    }
-    faces.push({ id, tris: list, ns, curved: curved && list.length <= 4 });
-  }
-}
-// centre, boundary edges and corners of a face - worked out only when a face is actually selected
-function info(f) {
-  if (f.p) return f;
-  const c = new THREE.Vector3(), bedges = [], bv = new Map(); let A = 0;
-  const pt = (t, i) => new THREE.Vector3(tris[t * 9 + i * 3], tris[t * 9 + i * 3 + 1], tris[t * 9 + i * 3 + 2]);
-  for (const t of f.tris) {
-    const o = t * 9, a = Math.hypot(...new THREE.Vector3(tris[o + 3] - tris[o], tris[o + 4] - tris[o + 1], tris[o + 5] - tris[o + 2]).cross(new THREE.Vector3(tris[o + 6] - tris[o], tris[o + 7] - tris[o + 1], tris[o + 8] - tris[o + 2])).toArray()) / 2;
-    A += a; c.x += a * (tris[o] + tris[o + 3] + tris[o + 6]) / 3; c.y += a * (tris[o + 1] + tris[o + 4] + tris[o + 7]) / 3; c.z += a * (tris[o + 2] + tris[o + 5] + tris[o + 8]) / 3;
-    for (let i = 0; i < 3; i++) {
-      const ei = te[t * 3 + i], u = ea[ei] === t ? eb[ei] : ea[ei];
-      if (u < 0 || faceOf[u] !== f.id) { const p1 = pt(t, i), p2 = pt(t, (i + 1) % 3); bedges.push([p1, p2]); bv.set(vid[t * 3 + i], p1); bv.set(vid[t * 3 + (i + 1) % 3], p2); }
-    }
-  }
-  f.n = new THREE.Vector3(...f.ns); f.p = c.divideScalar(A); f.bedges = bedges; f.bv = [...bv.values()]; return f;
-}
-
-// closest point on triangle t to point p (Ericson)
-const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _ab = new THREE.Vector3(), _ac = new THREE.Vector3(), _ap = new THREE.Vector3();
-function closestOnTri(p, t, out) {
-  _a.set(tris[t * 9], tris[t * 9 + 1], tris[t * 9 + 2]); _b.set(tris[t * 9 + 3], tris[t * 9 + 4], tris[t * 9 + 5]); _c.set(tris[t * 9 + 6], tris[t * 9 + 7], tris[t * 9 + 8]);
-  _ab.subVectors(_b, _a); _ac.subVectors(_c, _a); _ap.subVectors(p, _a);
-  const d1 = _ab.dot(_ap), d2 = _ac.dot(_ap); if (d1 <= 0 && d2 <= 0) return out.copy(_a);
-  _ap.subVectors(p, _b); const d3 = _ab.dot(_ap), d4 = _ac.dot(_ap); if (d3 >= 0 && d4 <= d3) return out.copy(_b);
-  const vc = d1 * d4 - d3 * d2; if (vc <= 0 && d1 >= 0 && d3 <= 0) return out.copy(_a).addScaledVector(_ab, d1 / (d1 - d3));
-  _ap.subVectors(p, _c); const d5 = _ab.dot(_ap), d6 = _ac.dot(_ap); if (d6 >= 0 && d5 <= d6) return out.copy(_c);
-  const vb = d5 * d2 - d1 * d6; if (vb <= 0 && d2 >= 0 && d6 <= 0) return out.copy(_a).addScaledVector(_ac, d2 / (d2 - d6));
-  const va = d3 * d6 - d5 * d4; if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return out.copy(_b).addScaledVector(_c.sub(_b), (d4 - d3) / (d4 - d3 + d5 - d6));
-  const den = 1 / (va + vb + vc); return out.copy(_a).addScaledVector(_ab, vb * den).addScaledVector(_ac, vc * den);
-}
-function segSeg(p1, q1, p2, q2, c1, c2) {   // closest points between two segments
-  const d1 = q1.clone().sub(p1), d2 = q2.clone().sub(p2), r = p1.clone().sub(p2), a = d1.dot(d1), e = d2.dot(d2), f = d2.dot(r), cl = x => Math.min(1, Math.max(0, x)); let s, t;
-  if (a <= 1e-14 && e <= 1e-14) { s = t = 0; } else if (a <= 1e-14) { s = 0; t = cl(f / e); } else {
-    const c = d1.dot(r);
-    if (e <= 1e-14) { t = 0; s = cl(-c / a); } else {
-      const b = d1.dot(d2), den = a * e - b * b; s = den > 1e-14 ? cl((b * f - c * e) / den) : 0; t = (b * s + f) / e;
-      if (t < 0) { t = 0; s = cl(-c / a); } else if (t > 1) { t = 1; s = cl((b - c) / a); }
-    }
-  }
-  c1.copy(p1).addScaledVector(d1, s); c2.copy(p2).addScaledVector(d2, t); return c1.distanceTo(c2);
-}
-// shortest distance between two flat faces (edges and corners included, so side-by-side panels work too)
-function minDist(f1, f2) {
-  const best = { d: Infinity, P: null, Q: null }, tmp = new THREE.Vector3(), c1 = new THREE.Vector3(), c2 = new THREE.Vector3();
-  const side = (fa, fb, swap) => { for (const v of fa.bv) for (const t of fb.tris) { closestOnTri(v, t, tmp); const d = v.distanceTo(tmp); if (d < best.d) { best.d = d; best.P = (swap ? tmp : v).clone(); best.Q = (swap ? v : tmp).clone(); } } };
-  side(f1, f2, false); side(f2, f1, true);
-  for (const [a, b] of f1.bedges) for (const [c, d] of f2.bedges) { const dd = segSeg(a, b, c, d, c1, c2); if (dd < best.d) { best.d = dd; best.P = c1.clone(); best.Q = c2.clone(); } }
-  return best;
-}
-// ==== GEOMETRY END ======================================================
-
-let ratio = 10, model = null;
 new GLTFLoader().load(`${base}.glb`, g => {
-  model = g.scene; scene.add(model); model.updateMatrixWorld(true);
-  ratio = Number(q.get('ratio')) || model.getObjectByName('AR_ROOT')?.userData?.ratio || 10;
-  const box = new THREE.Box3().setFromObject(model), c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length();
-  buildFeatures(model); buildFaces(model, r * 2e-5);
+  scene.add(g.scene); g.scene.updateMatrixWorld(true);
+  ratio = Number(q.get('ratio')) || g.scene.getObjectByName('AR_ROOT')?.userData?.ratio || 10;
+  buildFeatures(g.scene);
+  const box = new THREE.Box3().setFromObject(g.scene), c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length();
   controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(0.6, 0.4, 0.9).normalize().multiplyScalar(r * 1.1)); controls.update();
-  refresh();
+  $('status').textContent = `Tap a corner for point A  (${(feat.length / 3) | 0} snap points)`;
 }, undefined, () => $('status').textContent = 'Could not load the model');
 
-// snapping: nearest corner to the finger/mouse in screen space
+// ---- snapping: nearest corner to the finger/mouse in screen space ----
 function snap(px, py, R) {
   camera.updateMatrixWorld();
   const M = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).elements, W = innerWidth, H = innerHeight;
@@ -221,79 +92,44 @@ function snap(px, py, R) {
   }
   return best < 0 ? null : new THREE.Vector3(feat[best], feat[best + 1], feat[best + 2]);
 }
-const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
-function faceAt(x, y) {   // nearest surface under the finger/mouse
-  if (!model) return -1; ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
-  const h = ray.intersectObject(model, true)[0]; return h ? faceOf[h.object.userData.off + h.faceIndex] : -1;
-}
-function hlMesh(id, op) {   // semi-transparent blue overlay on a face
-  const f = faces[id], pos = new Float32Array(f.tris.length * 9); f.tris.forEach((t, i) => pos.set(tris.subarray(t * 9, t * 9 + 9), i * 9));
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x2a7fff, transparent: true, opacity: op, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-  mesh.renderOrder = 5; scene.add(mesh); return mesh;
-}
-const drop = o => { if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); } };
 
-// picking: a corner near the tap = a point, otherwise the surface under the tap
-let sel = [], hover = null, hoverFace = -1, hoverMesh = null, selMeshes = [], down = null, moveAt = null; const el = renderer.domElement;
+// ---- picking ----
+let pts = [], hover = null, down = null; const el = renderer.domElement;
 el.addEventListener('pointerdown', e => down = { x: e.clientX, y: e.clientY });
 el.addEventListener('pointerup', e => {
   if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
-  const s = snap(e.clientX, e.clientY, e.pointerType === 'mouse' ? 20 : 28);
-  if (s) return add({ t: 'p', v: s });
-  const f = faceAt(e.clientX, e.clientY);
-  if (f < 0) { $('status').textContent = 'Nothing there – tap a corner or a surface'; return; }
-  if (faces[f].curved) { $('status').textContent = 'That surface is curved – tap a flat surface or a corner'; return; }
-  add({ t: 's', f });
+  const s = snap(e.clientX, e.clientY, e.pointerType === 'mouse' ? 20 : 40);
+  if (!s) { $('status').textContent = 'No corner near there – zoom in or tap closer to a corner'; return; }
+  if (pts.length >= 2) pts = []; pts.push(s); refresh();
 });
-el.addEventListener('pointermove', e => { moveAt = e.pointerType === 'mouse' && !e.buttons ? { x: e.clientX, y: e.clientY } : (hover = null, hoverFace = -1, null); });
-function add(item) { if (sel.length >= 2) sel = []; sel.push(item); refresh(); }
-$('clear').onclick = () => { sel = []; refresh(); };
+el.addEventListener('pointermove', e => { hover = e.pointerType === 'mouse' && !e.buttons ? snap(e.clientX, e.clientY, 20) : null; });
+$('clear').onclick = () => { pts = []; refresh(); };
 
-// dimension display (CAD axes: X = x, Y = -z, Z = up = y in the glTF file)
+// ---- dimension display (CAD axes: X = x, Y = -z, Z = up = y in the glTF file) ----
 const lines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true }));
 lines.frustumCulled = false; lines.renderOrder = 10; scene.add(lines);
 const labs = ['#ff7a00', '#d22', '#1a9a1a', '#14e'].map(col => { const d = document.createElement('div'); d.className = 'lab'; d.style.background = col; d.style.display = 'none'; document.body.append(d); return d; });
 const fmt = v => Math.round(v).toLocaleString('en-GB') + ' mm';
 let segs = [];
 function refresh() {
-  selMeshes.forEach(drop); selMeshes = sel.filter(s => s.t === 's').map(s => hlMesh(s.f, 0.45));
-  segs = []; labs.forEach(l => l.style.display = 'none'); $('lD').textContent = 'Direct';
+  segs = []; labs.forEach(l => l.style.display = 'none');
   ['vD', 'vX', 'vY', 'vZ'].forEach(id => $(id).textContent = '–');
   lines.geometry.setAttribute('position', new THREE.Float32BufferAttribute([], 3)); lines.geometry.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
-  if (!model) return;
-  if (sel.length < 2) { $('status').textContent = sel.length ? 'Now tap a corner or a surface' : 'Tap a corner (point) or a flat surface'; return; }
-  sel.forEach(s => s.t === 's' && info(faces[s.f]));
-  const [x, y] = sel; let A, B, name = 'Direct', note = '';
-  if (x.t === 'p' && y.t === 'p') { A = x.v; B = y.v; }
-  else if (x.t === 's' && y.t === 's') {
-    const r = minDist(faces[x.f], faces[y.f]); A = r.P; B = r.Q; name = 'Minimum';
-    const ang = Math.acos(Math.min(1, Math.abs(faces[x.f].n.dot(faces[y.f].n)))) * 180 / Math.PI;
-    note = ang > 1 ? ` · surfaces are ${ang.toFixed(1)}° apart` : ' · surfaces are parallel';
-  } else {
-    const P = (x.t === 'p' ? x : y).v, f = faces[(x.t === 's' ? x : y).f];
-    A = P; B = P.clone().addScaledVector(f.n, -f.n.dot(P.clone().sub(f.p))); name = 'Perpendicular'; note = ' · to the plane of the surface';
-  }
-  $('lD').textContent = name;
-  const P1 = new THREE.Vector3(B.x, A.y, A.z), P2 = new THREE.Vector3(B.x, A.y, B.z), f = ratio * 1000, d = B.clone().sub(A);
+  if (pts.length < 2) { $('status').textContent = pts.length ? 'Now tap a corner for point B' : 'Tap a corner for point A'; return; }
+  const [A, B] = pts, P1 = new THREE.Vector3(B.x, A.y, A.z), P2 = new THREE.Vector3(B.x, A.y, B.z), f = ratio * 1000, d = B.clone().sub(A);
   const vals = [d.length() * f, Math.abs(d.x) * f, Math.abs(d.z) * f, Math.abs(d.y) * f];
   segs = [[A, B, [1, .48, 0]], [A, P1, [.85, .13, .13]], [P1, P2, [.1, .6, .1]], [P2, B, [.08, .13, .93]]];
   const pos = [], col = []; segs.forEach(([p, q2, c]) => { pos.push(p.x, p.y, p.z, q2.x, q2.y, q2.z); col.push(...c, ...c); });
   lines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); lines.geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   ['vD', 'vX', 'vY', 'vZ'].forEach((id, i) => $(id).textContent = fmt(vals[i]));
-  segs.forEach((s, i) => s.push(vals[i]));
-  $('status').textContent = 'Tap again to start a new measurement' + note;
+  segs.forEach((s, i) => { s.push(vals[i]); });
+  $('status').textContent = 'Tap again to start a new measurement';
 }
 const scr = v => { const p = v.clone().project(camera); return { x: (p.x * .5 + .5) * innerWidth, y: (1 - (p.y * .5 + .5)) * innerHeight, ok: p.z < 1 }; };
 const place = (d, v) => { if (!v) { d.style.display = 'none'; return; } const s = scr(v); d.style.display = s.ok ? 'block' : 'none'; d.style.left = s.x + 'px'; d.style.top = s.y + 'px'; };
 (function loop() {
-  requestAnimationFrame(loop); controls.update();
-  if (moveAt) {   // mouse hover: show the corner it would pick, or else preview the surface in light blue
-    hover = snap(moveAt.x, moveAt.y, 20); const hf = hover ? -1 : faceAt(moveAt.x, moveAt.y), want = hf >= 0 && !faces[hf].curved ? hf : -1; moveAt = null;
-    if (want !== hoverFace) { drop(hoverMesh); hoverMesh = want >= 0 ? hlMesh(want, 0.22) : null; hoverFace = want; }
-  }
-  renderer.render(scene, camera);
-  place($('dA'), sel[0]?.v); place($('dB'), sel[1]?.v); place($('hover'), hover);
+  requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera);
+  place($('dA'), pts[0]); place($('dB'), pts[1]); place($('hover'), hover);
   segs.forEach(([p, q2, , v], i) => { const l = labs[i]; if (v < 0.5) { l.style.display = 'none'; return; }
     const s = scr(p.clone().add(q2).multiplyScalar(0.5)); l.style.display = s.ok ? 'block' : 'none'; l.style.left = s.x + 'px'; l.style.top = s.y + 'px'; l.textContent = fmt(v); });
 })();
